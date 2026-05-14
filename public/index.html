@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>GTA 2D</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -11,23 +11,34 @@
   <div id="menu">
     <h1>GTA 2D</h1>
     <p class="subtitle">Top-Down Action</p>
+
+    <!-- Выбор режима -->
     <div id="menu-buttons">
       <button id="btn-singleplayer" class="menu-btn">Одиночная игра</button>
       <button id="btn-multiplayer" class="menu-btn">Мультиплеер</button>
     </div>
+
+    <!-- Подключение к мультиплееру -->
     <div id="multiplayer-connect" style="display:none;">
       <input type="text" id="nick-input" placeholder="Введите никнейм" maxlength="16" />
       <button id="btn-connect" class="menu-btn small">Подключиться</button>
       <button id="btn-back" class="menu-btn small">Назад</button>
     </div>
+
+    <!-- Выбор управления -->
+    <div id="controls-select">
+      <p class="controls-label">Управление:</p>
+      <div class="controls-options">
+        <button id="ctrl-keyboard" class="ctrl-btn active">Клавиатура + Мышь</button>
+        <button id="ctrl-touch" class="ctrl-btn">Сенсорное (телефон)</button>
+      </div>
+    </div>
+
     <div id="controls-info">
       <p><strong>Управление:</strong></p>
       <p>WASD / Стрелки — движение</p>
-      <p>Мышь — прицел</p>
-      <p>ЛКМ — стрельба</p>
-      <p>1,2,3 — оружие</p>
-      <p>E — сесть/выйти из машины</p>
-      <p>F — подобрать предмет</p>
+      <p>Мышь — прицел / ЛКМ — стрельба</p>
+      <p>1,2,3 — оружие / E — машина / F — предмет</p>
       <p>Enter — чат</p>
     </div>
   </div>
@@ -52,6 +63,26 @@
     <!-- Мини-карта справа сверху -->
     <div id="minimap">
       <canvas id="minimapCanvas" width="150" height="150"></canvas>
+    </div>
+
+    <!-- Мобильное управление (touch) -->
+    <div id="mobile-controls" style="display:none;">
+      <!-- Джойстик -->
+      <div id="joystick-area">
+        <div id="joystick-knob"></div>
+      </div>
+      <!-- Кнопки -->
+      <div id="touch-buttons">
+        <button id="btn-fire" class="touch-btn fire-btn">🔫</button>
+        <div class="touch-weapons">
+          <button class="touch-btn weapon-btn" data-w="0">1</button>
+          <button class="touch-btn weapon-btn" data-w="1">2</button>
+          <button class="touch-btn weapon-btn" data-w="2">3</button>
+        </div>
+        <button id="btn-enter" class="touch-btn action-btn">E</button>
+        <button id="btn-pickup" class="touch-btn action-btn">F</button>
+        <button id="btn-chat-toggle" class="touch-btn chat-btn">💬</button>
+      </div>
     </div>
 
     <!-- Чат -->

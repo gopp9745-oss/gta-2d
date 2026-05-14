@@ -1,6 +1,6 @@
 /**
  * GTA 2D - Client
- * Минимальный клиент: рендер, ввод, сеть, HUD.
+ * Поддержка: клавиатура+мышь и сенсорное управление (телефон)
  */
 
 // ===== КОНСТАНТЫ =====
@@ -18,6 +18,14 @@ let socket = null, playerId = null, worldData = null, gameState = null, myPlayer
 let keys = { up: false, down: false, left: false, right: false };
 let mouseX = 0, mouseY = 0, mouseDown = false, cameraX = 0, cameraY = 0;
 let isChatOpen = false, isMultiplayer = false;
+let controlMode = 'keyboard'; // 'keyboard' или 'touch'
+
+// Для сенсорного управления
+let touchKeys = { up: false, down: false, left: false, right: false };
+let touchShoot = false;
+let touchWeapon = -1;
+let touchEnter = false;
+let touchPickup = false;
 
 // ===== РАЗМЕР =====
 function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
@@ -30,10 +38,50 @@ $('btn-back').onclick = () => { $('multiplayer-connect').style.display = 'none';
 $('btn-connect').onclick = () => startGame('game:join');
 $('nick-input').onkeydown = e => { if (e.key === 'Enter') $('btn-connect').click(); };
 
+// Выбор управления
+$('ctrl-keyboard').onclick = () => {
+  $('ctrl-keyboard').classList.add('active');
+  $('ctrl-touch').classList.remove('active');
+  controlMode = 'keyboard';
+  $('mobile-controls').style.display = 'none';
+  updateControlsInfo('keyboard');
+};
+$('ctrl-touch').onclick = () => {
+  $('ctrl-touch').classList.add('active');
+  $('ctrl-keyboard').classList.remove('active');
+  controlMode = 'touch';
+  updateControlsInfo('touch');
+};
+
+function updateControlsInfo(mode) {
+  const info = $('controls-info');
+  if (mode === 'touch') {
+    info.innerHTML = '<p><strong>Управление (сенсор):</strong></p>' +
+      '<p>Джойстик (слева) — движение</p>' +
+      '<p>🔫 — стрельба</p>' +
+      '<p>1,2,3 — оружие / E — машина / F — предмет</p>' +
+      '<p>💬 — чат</p>';
+  } else {
+    info.innerHTML = '<p><strong>Управление:</strong></p>' +
+      '<p>WASD / Стрелки — движение</p>' +
+      '<p>Мышь — прицел / ЛКМ — стрельба</p>' +
+      '<p>1,2,3 — оружие / E — машина / F — предмет</p>' +
+      '<p>Enter — чат</p>';
+  }
+}
+
 function startGame(eventType) {
   const nick = $('nick-input').value.trim() || 'Player';
   $('menu').style.display = 'none';
   $('game-screen').style.display = 'block';
+
+  // Показываем мобильное управление если выбран touch
+  if (controlMode === 'touch') {
+    $('mobile-controls').style.display = 'block';
+    // На телефонах скрываем курсор
+    canvas.style.cursor = 'none';
+  }
+
   isMultiplayer = eventType === 'game:join';
   socket = io({ transports: ['websocket', 'polling'] });
 
@@ -61,9 +109,26 @@ function startGame(eventType) {
   socket.on('disconnect', () => addChat('System', 'Disconnected'));
 }
 
-// ===== ВВОД =====
-// Используем e.code чтобы работало на любой раскладке
+// ===== ОТПРАВКА ВВОДА =====
+function send(data) { if (socket && socket.connected) socket.emit('player:input', data); }
+
+setInterval(() => {
+  const k = controlMode === 'touch' ? touchKeys : keys;
+  send({
+    keys: { up: k.up, down: k.down, left: k.left, right: k.right },
+    shoot: controlMode === 'touch' ? touchShoot : mouseDown,
+    mouseX: Math.round(mouseX + cameraX),
+    mouseY: Math.round(mouseY + cameraY)
+  });
+  // Отправляем разовые действия
+  if (touchWeapon >= 0) { send({ weapon: touchWeapon }); touchWeapon = -1; }
+  if (touchEnter) { send({ enterVehicle: true }); touchEnter = false; }
+  if (touchPickup) { send({ pickup: true }); touchPickup = false; }
+}, 50);
+
+// ===== КЛАВИАТУРА =====
 document.addEventListener('keydown', e => {
+  if (controlMode === 'touch') return;
   const c = e.code;
   if (c === 'KeyW' || c === 'ArrowUp') { keys.up = true; e.preventDefault(); }
   else if (c === 'KeyS' || c === 'ArrowDown') { keys.down = true; e.preventDefault(); }
@@ -83,6 +148,7 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('keyup', e => {
+  if (controlMode === 'touch') return;
   const c = e.code;
   if (c === 'KeyW' || c === 'ArrowUp') { keys.up = false; e.preventDefault(); }
   else if (c === 'KeyS' || c === 'ArrowDown') { keys.down = false; e.preventDefault(); }
@@ -90,24 +156,109 @@ document.addEventListener('keyup', e => {
   else if (c === 'KeyD' || c === 'ArrowRight') { keys.right = false; e.preventDefault(); }
 });
 
+// ===== МЫШЬ =====
 canvas.addEventListener('mousemove', e => {
+  if (controlMode === 'touch') return;
   const r = canvas.getBoundingClientRect();
   mouseX = e.clientX - r.left; mouseY = e.clientY - r.top;
 });
-canvas.addEventListener('mousedown', e => { if (e.button === 0) { mouseDown = true; e.preventDefault(); } });
-canvas.addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
+canvas.addEventListener('mousedown', e => {
+  if (controlMode === 'touch') return;
+  if (e.button === 0) { mouseDown = true; e.preventDefault(); }
+});
+canvas.addEventListener('mouseup', e => {
+  if (controlMode === 'touch') return;
+  if (e.button === 0) mouseDown = false;
+});
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-// Отправка ввода каждые 50мс
-function send(data) { if (socket && socket.connected) socket.emit('player:input', data); }
-setInterval(() => {
-  send({
-    keys: { up: keys.up, down: keys.down, left: keys.left, right: keys.right },
-    shoot: mouseDown,
-    mouseX: Math.round(mouseX + cameraX),
-    mouseY: Math.round(mouseY + cameraY)
+// ===== СЕНСОРНОЕ УПРАВЛЕНИЕ =====
+// Джойстик
+const joystickArea = $('joystick-area');
+const joystickKnob = $('joystick-knob');
+let joystickTouchId = null;
+const JOYSTICK_RADIUS = 40; // радиус движения стика от центра
+
+function handleJoystick(clientX, clientY) {
+  const rect = joystickArea.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  let dx = clientX - cx;
+  let dy = clientY - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist > JOYSTICK_RADIUS) {
+    dx = (dx / dist) * JOYSTICK_RADIUS;
+    dy = (dy / dist) * JOYSTICK_RADIUS;
+  }
+  // Позиция кружка
+  joystickKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  // Определяем направление
+  const deadZone = 10;
+  touchKeys.up = dy < -deadZone;
+  touchKeys.down = dy > deadZone;
+  touchKeys.left = dx < -deadZone;
+  touchKeys.right = dx > deadZone;
+}
+
+function resetJoystick() {
+  joystickKnob.style.transform = 'translate(-50%, -50%)';
+  touchKeys.up = touchKeys.down = touchKeys.left = touchKeys.right = false;
+  joystickTouchId = null;
+}
+
+joystickArea.addEventListener('touchstart', e => {
+  if (e.target !== joystickArea && e.target !== joystickKnob) return;
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  joystickTouchId = touch.identifier;
+  handleJoystick(touch.clientX, touch.clientY);
+});
+
+joystickArea.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickTouchId) {
+      handleJoystick(touch.clientX, touch.clientY);
+    }
+  }
+});
+
+joystickArea.addEventListener('touchend', e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickTouchId) {
+      resetJoystick();
+    }
+  }
+});
+
+joystickArea.addEventListener('touchcancel', resetJoystick);
+
+// Кнопка стрельбы
+$('btn-fire').addEventListener('touchstart', e => { e.preventDefault(); touchShoot = true; });
+$('btn-fire').addEventListener('touchend', e => { e.preventDefault(); touchShoot = false; });
+$('btn-fire').addEventListener('touchcancel', e => { touchShoot = false; });
+
+// Кнопки оружия
+for (const btn of document.querySelectorAll('.weapon-btn')) {
+  btn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const w = parseInt(btn.dataset.w);
+    document.querySelectorAll('.weapon-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    touchWeapon = w;
   });
-}, 50);
+}
+
+// Кнопки действий
+$('btn-enter').addEventListener('touchstart', e => { e.preventDefault(); touchEnter = true; });
+$('btn-pickup').addEventListener('touchstart', e => { e.preventDefault(); touchPickup = true; });
+
+// Кнопка чата
+$('btn-chat-toggle').addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (isChatOpen) { sendChat(); }
+  else { isChatOpen = true; $('chat-input').style.display = 'block'; $('chat-input').focus(); }
+});
 
 // ===== ЧАТ =====
 function closeChat() { isChatOpen = false; $('chat-input').style.display = 'none'; $('chat-input').value = ''; $('chat-input').blur(); }
