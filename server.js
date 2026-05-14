@@ -356,110 +356,8 @@ function generateWorld() {
 
   return { grid, buildings, trees, roadRows, roadCols, specialObjects };
 }
-  }
 
-  // Дороги: каждая 6-я строка и столбец — дорога
-  const roadRows = [];
-  const roadCols = [];
-  for (let i = 0; i < 60; i += 6) {
-    roadRows.push(i);
-    roadCols.push(i);
-  }
-
-  // Размечаем дороги
-  for (const row of roadRows) {
-    for (let col = 0; col < 60; col++) {
-      grid[row][col] = 'road';
-    }
-  }
-  for (const col of roadCols) {
-    for (let row = 0; row < 60; row++) {
-      grid[row][col] = 'road';
-    }
-  }
-
-  // Тротуары рядом с дорогами (только 1 ряд)
-  for (const row of roadRows) {
-    for (const dr of [-1, 1]) {
-      const r = row + dr;
-      if (r >= 0 && r < 60) {
-        for (let col = 0; col < 60; col++) {
-          if (grid[r][col] === 'grass') grid[r][col] = 'sidewalk';
-        }
-      }
-    }
-  }
-  for (const col of roadCols) {
-    for (const dc of [-1, 1]) {
-      const c = col + dc;
-      if (c >= 0 && c < 60) {
-        for (let row = 0; row < 60; row++) {
-          if (grid[row][c] === 'grass') grid[row][c] = 'sidewalk';
-        }
-      }
-    }
-  }
-
-  // Здания — разные типы и этажи
-  const buildingTypes = ['residential', 'commercial', 'industrial'];
-
-  for (let row = 0; row < 60; row += 6) {
-    for (let col = 0; col < 60; col += 6) {
-      if (Math.random() < 0.6) {
-        const bType = buildingTypes[randInt(0, 2)];
-        const bw = 1 + Math.floor(Math.random() * 2); // 1-2 клетки
-        const bh = 1 + Math.floor(Math.random() * 2); // 1-2 клетки
-        const maxCol = 60 - bw;
-        const maxRow = 60 - bh;
-        const bc = Math.min(col + 1 + Math.floor(Math.random() * Math.max(1, maxCol - col - 1)), maxCol - 1);
-        const br = Math.min(row + 1 + Math.floor(Math.random() * Math.max(1, maxRow - row - 1)), maxRow - 1);
-        
-        let canBuild = true;
-        // Проверяем клетки
-        for (let dr = 0; dr < bh && canBuild; dr++) {
-          for (let dc = 0; dc < bw && canBuild; dc++) {
-            const rr = br + dr, cc = bc + dc;
-            if (rr >= 60 || cc >= 60 || (grid[rr][cc] !== 'grass' && grid[rr][cc] !== 'sidewalk')) {
-              canBuild = false;
-            }
-          }
-        }
-        
-        if (canBuild) {
-          // Размечаем клетки
-          for (let dr = 0; dr < bh; dr++) {
-            for (let dc = 0; dc < bw; dc++) {
-              grid[br + dr][bc + dc] = 'building';
-            }
-          }
-          buildings.push({
-            x: bc * TILE_SIZE,
-            y: br * TILE_SIZE,
-            w: bw * TILE_SIZE,
-            h: bh * TILE_SIZE,
-            type: bType,
-            floors: 1 + Math.floor(Math.random() * 3) // 1-3 этажа
-          });
-        }
-      }
-    }
-  }
-
-  // Деревья на газонах
-  for (let row = 0; row < 60; row++) {
-    for (let col = 0; col < 60; col++) {
-      if (grid[row][col] === 'grass' && Math.random() < 0.08) {
-        trees.push({
-          x: col * TILE_SIZE + TILE_SIZE / 2,
-          y: row * TILE_SIZE + TILE_SIZE / 2,
-          radius: 10
-        });
-      }
-    }
-  }
-
-  return { grid, buildings, trees, roadRows, roadCols };
-}
+// ===== КОЛЛИЗИИ =====
 
 // ===== КОЛЛИЗИИ =====
 
@@ -609,54 +507,7 @@ class GameWorld {
       this.vehicles[v.id] = v;
     }
   }
-    
-    // ПРИПАРКОВАННЫЕ МАШИНЫ у зданий и на обочинах (12 штук)
-    const parkedPositions = [];
-    // Парковка вдоль дорог (с обочинами)
-    for (const row of this.mapData.roadRows) {
-      for (let col = 1; col < 60; col += 6) {
-        if (col < 59) {
-          parkedPositions.push({
-            x: col * TILE_SIZE + TILE_SIZE/2,
-            y: row * TILE_SIZE - 25,
-            angle: -Math.PI/2
-          });
-          parkedPositions.push({
-            x: col * TILE_SIZE + TILE_SIZE/2,
-            y: row * TILE_SIZE + TILE_SIZE + 25,
-            angle: Math.PI/2
-          });
-        }
-      }
-    }
-    for (const col of this.mapData.roadCols) {
-      for (let row = 1; row < 60; row += 6) {
-        if (row < 59) {
-          parkedPositions.push({
-            x: col * TILE_SIZE - 25,
-            y: row * TILE_SIZE + TILE_SIZE/2,
-            angle: Math.PI
-          });
-          parkedPositions.push({
-            x: col * TILE_SIZE + TILE_SIZE + 25,
-            y: row * TILE_SIZE + TILE_SIZE/2,
-            angle: 0
-          });
-        }
-      }
-    }
-    
-    // Спавним припаркованные машины
-    for (let i = 0; i < 12 && i < parkedPositions.length; i++) {
-      const pos = parkedPositions[i];
-      // 15% шанс полицейской машины на парковке
-      const type = Math.random() < 0.15 ? 'police' : 'car';
-      const v = new Vehicle(this.genId(), type, pos.x, pos.y, pos.angle, true);
-      v.npcDriver = null; // припаркованные машины без водителя
-      this.vehicles[v.id] = v;
-    }
-  }
-
+  
   spawnItems() {
     const types = ['health', 'weapon', 'health', 'weapon', 'health'];
     const weaponTypes = ['pistol', 'auto', 'shotgun'];
