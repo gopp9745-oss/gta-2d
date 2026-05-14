@@ -114,7 +114,7 @@ class Player {
 }
 
 class Vehicle {
-  constructor(id, type, x, y, rotation) {
+  constructor(id, type, x, y, rotation, isParked = false) {
     this.id = id;
     this.type = type;
     this.x = x;
@@ -124,11 +124,15 @@ class Vehicle {
     this.maxHp = this.hp;
     this.speed = VEHICLE_TYPES[type].speed;
     this.driver = null; // id игрока
-    this.npcDriver = false;
+    this.npcDriver = null; // null, 'cop', 'pedestrian', 'gangster'
     this.targetX = x;
     this.targetY = y;
     this.width = 30;
     this.height = 16;
+    this.isParked = isParked; // припаркована ли машина
+    this.parkAngle = rotation || 0; // угол припарковки
+    this.aiState = 'idle'; // idle, patrol, chase
+    this.aiTimer = 0;
   }
 
   get color() {
@@ -187,13 +191,14 @@ class Bullet {
 // ===== ГЕНЕРАЦИЯ МИРА =====
 
 /**
- * Генерирует карту: дороги, здания, деревья.
+ * Генерирует карту: дороги, здания, деревья, особые объекты.
  * Возвращает объект с массивами препятствий.
  */
 function generateWorld() {
   const buildings = [];
   const trees = [];
   const grid = [];
+  const specialObjects = []; // банки, АЗС, гаражи
 
   // Сетка 60x60 (3000/50)
   for (let row = 0; row < 60; row++) {
@@ -245,32 +250,195 @@ function generateWorld() {
     }
   }
 
-  // Здания — ставим прямоугольниками вручную, без floodFill
+  // Здания — разные типы и этажи
+  const buildingTypes = ['residential', 'commercial', 'industrial'];
+
   for (let row = 0; row < 60; row += 6) {
     for (let col = 0; col < 60; col += 6) {
       if (Math.random() < 0.6) {
-        // Случайный размер здания 1-2 клетки шириной, 1-2 высотой
-        const bw = 1 + Math.floor(Math.random() * 2); // 1-2
-        const bh = 1 + Math.floor(Math.random() * 2); // 1-2
-        const br = row + 1 + Math.floor(Math.random() * (4 - bh));
-        const bc = col + 1 + Math.floor(Math.random() * (4 - bw));
-        let w = 0, h = 0;
-        for (let dr = 0; dr < bh; dr++) {
-          for (let dc = 0; dc < bw; dc++) {
+        const bType = buildingTypes[randInt(0, 2)];
+        const bw = 1 + Math.floor(Math.random() * 2); // 1-2 клетки
+        const bh = 1 + Math.floor(Math.random() * 2); // 1-2 клетки
+        const maxCol = 60 - bw;
+        const maxRow = 60 - bh;
+        const bc = Math.min(col + 1 + Math.floor(Math.random() * Math.max(1, maxCol - col - 1)), maxCol - 1);
+        const br = Math.min(row + 1 + Math.floor(Math.random() * Math.max(1, maxRow - row - 1)), maxRow - 1);
+        
+        let canBuild = true;
+        // Проверяем клетки
+        for (let dr = 0; dr < bh && canBuild; dr++) {
+          for (let dc = 0; dc < bw && canBuild; dc++) {
             const rr = br + dr, cc = bc + dc;
-            if (rr < 60 && cc < 60 && (grid[rr][cc] === 'grass' || grid[rr][cc] === 'sidewalk')) {
-              grid[rr][cc] = 'building';
-              h = Math.max(h, rr - br + 1);
-              w = Math.max(w, cc - bc + 1);
+            if (rr >= 60 || cc >= 60 || (grid[rr][cc] !== 'grass' && grid[rr][cc] !== 'sidewalk')) {
+              canBuild = false;
             }
           }
         }
-        if (w > 0 && h > 0) {
+        
+        if (canBuild) {
+          // Размечаем клетки
+          for (let dr = 0; dr < bh; dr++) {
+            for (let dc = 0; dc < bw; dc++) {
+              grid[br + dr][bc + dc] = 'building';
+            }
+          }
           buildings.push({
             x: bc * TILE_SIZE,
             y: br * TILE_SIZE,
-            w: w * TILE_SIZE,
-            h: h * TILE_SIZE
+            w: bw * TILE_SIZE,
+            h: bh * TILE_SIZE,
+            type: bType,
+            floors: 1 + Math.floor(Math.random() * 3) // 1-3 этажа
+          });
+        }
+      }
+    }
+  }
+
+  // ОСОБЫЕ ОБЪЕКТЫ (банки, АЗС, гаражи) - по краям карты
+  const specialPositions = [
+    { type: 'bank', x: 200, y: 200 },
+    { type: 'bank', x: WORLD_W - 300, y: WORLD_H - 300 },
+    { type: 'gas_station', x: 500, y: WORLD_H - 400 },
+    { type: 'gas_station', x: WORLD_W - 600, y: 400 },
+    { type: 'garage', x: WORLD_W/2 - 100, y: 300 },
+    { type: 'garage', x: WORLD_W/2 + 50, y: WORLD_H - 400 },
+    { type: 'police_station', x: 1500, y: 1500 }
+  ];
+  
+  for (const sp of specialPositions) {
+    // Проверяем, что место свободно (не на дороге и не в здании)
+    const cellX = Math.floor(sp.x / TILE_SIZE);
+    const cellY = Math.floor(sp.y / TILE_SIZE);
+    if (cellX > 2 && cellX < 57 && cellY > 2 && cellY < 57) {
+      // Проверяем, нет ли уже здания
+      let occupied = false;
+      for (let dr = 0; dr < 4 && !occupied; dr++) {
+        for (let dc = 0; dc < 4 && !occupied; dc++) {
+          if (grid[cellY+dr] && grid[cellY+dr][cellX+dc] !== 'grass') {
+            occupied = true;
+          }
+        }
+      }
+      if (!occupied) {
+        // Размечаем территорию
+        for (let dr = 0; dr < 4; dr++) {
+          for (let dc = 0; dc < 4; dc++) {
+            if (cellY+dr < 60 && cellX+dc < 60) {
+              grid[cellY+dr][cellX+dc] = 'special';
+            }
+          }
+        }
+        specialObjects.push({
+          type: sp.type,
+          x: sp.x,
+          y: sp.y,
+          w: 200,
+          h: 200,
+          interactRadius: 50
+        });
+      }
+    }
+  }
+
+  // Деревья на газонах
+  for (let row = 0; row < 60; row++) {
+    for (let col = 0; col < 60; col++) {
+      if (grid[row][col] === 'grass' && Math.random() < 0.08) {
+        trees.push({
+          x: col * TILE_SIZE + TILE_SIZE / 2,
+          y: row * TILE_SIZE + TILE_SIZE / 2,
+          radius: 10
+        });
+      }
+    }
+  }
+
+  return { grid, buildings, trees, roadRows, roadCols, specialObjects };
+}
+  }
+
+  // Дороги: каждая 6-я строка и столбец — дорога
+  const roadRows = [];
+  const roadCols = [];
+  for (let i = 0; i < 60; i += 6) {
+    roadRows.push(i);
+    roadCols.push(i);
+  }
+
+  // Размечаем дороги
+  for (const row of roadRows) {
+    for (let col = 0; col < 60; col++) {
+      grid[row][col] = 'road';
+    }
+  }
+  for (const col of roadCols) {
+    for (let row = 0; row < 60; row++) {
+      grid[row][col] = 'road';
+    }
+  }
+
+  // Тротуары рядом с дорогами (только 1 ряд)
+  for (const row of roadRows) {
+    for (const dr of [-1, 1]) {
+      const r = row + dr;
+      if (r >= 0 && r < 60) {
+        for (let col = 0; col < 60; col++) {
+          if (grid[r][col] === 'grass') grid[r][col] = 'sidewalk';
+        }
+      }
+    }
+  }
+  for (const col of roadCols) {
+    for (const dc of [-1, 1]) {
+      const c = col + dc;
+      if (c >= 0 && c < 60) {
+        for (let row = 0; row < 60; row++) {
+          if (grid[row][c] === 'grass') grid[row][c] = 'sidewalk';
+        }
+      }
+    }
+  }
+
+  // Здания — разные типы и этажи
+  const buildingTypes = ['residential', 'commercial', 'industrial'];
+
+  for (let row = 0; row < 60; row += 6) {
+    for (let col = 0; col < 60; col += 6) {
+      if (Math.random() < 0.6) {
+        const bType = buildingTypes[randInt(0, 2)];
+        const bw = 1 + Math.floor(Math.random() * 2); // 1-2 клетки
+        const bh = 1 + Math.floor(Math.random() * 2); // 1-2 клетки
+        const maxCol = 60 - bw;
+        const maxRow = 60 - bh;
+        const bc = Math.min(col + 1 + Math.floor(Math.random() * Math.max(1, maxCol - col - 1)), maxCol - 1);
+        const br = Math.min(row + 1 + Math.floor(Math.random() * Math.max(1, maxRow - row - 1)), maxRow - 1);
+        
+        let canBuild = true;
+        // Проверяем клетки
+        for (let dr = 0; dr < bh && canBuild; dr++) {
+          for (let dc = 0; dc < bw && canBuild; dc++) {
+            const rr = br + dr, cc = bc + dc;
+            if (rr >= 60 || cc >= 60 || (grid[rr][cc] !== 'grass' && grid[rr][cc] !== 'sidewalk')) {
+              canBuild = false;
+            }
+          }
+        }
+        
+        if (canBuild) {
+          // Размечаем клетки
+          for (let dr = 0; dr < bh; dr++) {
+            for (let dc = 0; dc < bw; dc++) {
+              grid[br + dr][bc + dc] = 'building';
+            }
+          }
+          buildings.push({
+            x: bc * TILE_SIZE,
+            y: br * TILE_SIZE,
+            w: bw * TILE_SIZE,
+            h: bh * TILE_SIZE,
+            type: bType,
+            floors: 1 + Math.floor(Math.random() * 3) // 1-3 этажа
           });
         }
       }
@@ -318,8 +486,24 @@ class GameWorld {
     this.vehicles = {}; // id -> Vehicle
     this.npcs = {}; // id -> NPC
     this.items = {}; // id -> Item
+    this.specialObjects = {}; // id -> особые объекты
     this.bullets = []; // массив Bullet
     this.nextId = 1;
+    
+    // Преобразуем specialObjects из массива в объект с ID
+    for (let i = 0; i < this.mapData.specialObjects.length; i++) {
+      const sp = this.mapData.specialObjects[i];
+      this.specialObjects[i] = {
+        id: i,
+        type: sp.type,
+        x: sp.x,
+        y: sp.y,
+        w: sp.w,
+        h: sp.h,
+        interactRadius: sp.interactRadius || 50
+      };
+    }
+    
     this.spawnNPCs();
     this.spawnVehicles();
     this.spawnItems();
@@ -360,19 +544,115 @@ class GameWorld {
   }
 
   spawnVehicles() {
-    const positions = [
-      // позиции на дорогах
+    const roadPositions = [
       [300, 300], [900, 300], [1500, 300], [2100, 300], [2700, 300],
       [300, 900], [900, 900], [1500, 900], [2100, 900], [2700, 900],
       [300, 1500], [900, 1500], [2100, 1500], [2700, 1500],
       [300, 2100], [900, 2100], [1500, 2100], [2100, 2100], [2700, 2100],
       [300, 2700], [900, 2700], [1500, 2700], [2100, 2700], [2700, 2700],
     ];
-    for (let i = 0; i < 8; i++) {
-      const pos = positions[i % positions.length];
+    
+    // Движущиеся машины на дорогах (6 штук)
+    for (let i = 0; i < 6; i++) {
+      const pos = roadPositions[i % roadPositions.length];
       const type = Math.random() < 0.2 ? 'police' : 'car';
       const v = new Vehicle(this.genId(), type, pos[0], pos[1], rand(0, Math.PI * 2));
-      v.npcDriver = true;
+      v.npcDriver = type === 'police' ? 'cop' : 'pedestrian';
+      v.aiState = 'patrol';
+      this.vehicles[v.id] = v;
+    }
+    
+    // ПРИПАРКОВАННЫЕ МАШИНЫ у зданий и на обочинах (12 штук)
+    const parkedPositions = [];
+    // Парковка вдоль дорог (с обочинами)
+    for (const row of this.mapData.roadRows) {
+      for (let col = 1; col < 60; col += 6) {
+        if (col < 59) {
+          parkedPositions.push({
+            x: col * TILE_SIZE + TILE_SIZE/2,
+            y: row * TILE_SIZE - 25,
+            angle: -Math.PI/2
+          });
+          parkedPositions.push({
+            x: col * TILE_SIZE + TILE_SIZE/2,
+            y: row * TILE_SIZE + TILE_SIZE + 25,
+            angle: Math.PI/2
+          });
+        }
+      }
+    }
+    for (const col of this.mapData.roadCols) {
+      for (let row = 1; row < 60; row += 6) {
+        if (row < 59) {
+          parkedPositions.push({
+            x: col * TILE_SIZE - 25,
+            y: row * TILE_SIZE + TILE_SIZE/2,
+            angle: Math.PI
+          });
+          parkedPositions.push({
+            x: col * TILE_SIZE + TILE_SIZE + 25,
+            y: row * TILE_SIZE + TILE_SIZE/2,
+            angle: 0
+          });
+        }
+      }
+    }
+    
+    // Спавним припаркованные машины
+    for (let i = 0; i < 12 && i < parkedPositions.length; i++) {
+      const pos = parkedPositions[i];
+      // 20% шанс полицейской машины на парковке
+      const type = Math.random() < 0.2 ? 'police' : 'car';
+      const v = new Vehicle(this.genId(), type, pos.x, pos.y, pos.angle, true);
+      v.npcDriver = null; // припаркованные машины без водителя
+      v.aiState = 'idle';
+      this.vehicles[v.id] = v;
+    }
+  }
+    
+    // ПРИПАРКОВАННЫЕ МАШИНЫ у зданий и на обочинах (12 штук)
+    const parkedPositions = [];
+    // Парковка вдоль дорог (с обочинами)
+    for (const row of this.mapData.roadRows) {
+      for (let col = 1; col < 60; col += 6) {
+        if (col < 59) {
+          parkedPositions.push({
+            x: col * TILE_SIZE + TILE_SIZE/2,
+            y: row * TILE_SIZE - 25,
+            angle: -Math.PI/2
+          });
+          parkedPositions.push({
+            x: col * TILE_SIZE + TILE_SIZE/2,
+            y: row * TILE_SIZE + TILE_SIZE + 25,
+            angle: Math.PI/2
+          });
+        }
+      }
+    }
+    for (const col of this.mapData.roadCols) {
+      for (let row = 1; row < 60; row += 6) {
+        if (row < 59) {
+          parkedPositions.push({
+            x: col * TILE_SIZE - 25,
+            y: row * TILE_SIZE + TILE_SIZE/2,
+            angle: Math.PI
+          });
+          parkedPositions.push({
+            x: col * TILE_SIZE + TILE_SIZE + 25,
+            y: row * TILE_SIZE + TILE_SIZE/2,
+            angle: 0
+          });
+        }
+      }
+    }
+    
+    // Спавним припаркованные машины
+    for (let i = 0; i < 12 && i < parkedPositions.length; i++) {
+      const pos = parkedPositions[i];
+      // 15% шанс полицейской машины на парковке
+      const type = Math.random() < 0.15 ? 'police' : 'car';
+      const v = new Vehicle(this.genId(), type, pos.x, pos.y, pos.angle, true);
+      v.npcDriver = null; // припаркованные машины без водителя
       this.vehicles[v.id] = v;
     }
   }
@@ -401,17 +681,54 @@ class GameWorld {
   }
 
   spawnCopPlayer(wantedLevel) {
-    // Спавним полицейских NPC рядом с игроком
+    // Спавним полицейские машины с полицейскими внутри
+    // Машины появляются на ближайшей дороге в радиусе 400-800 клеток от игрока
     for (const id in this.players) {
       const p = this.players[id];
       if (!p.alive) continue;
-      for (let i = 0; i < Math.min(wantedLevel, 3); i++) {
+      
+      // Количество полицейских зависит от уровня розыска (1-3 машины)
+      const numCops = Math.min(wantedLevel, 3);
+      for (let i = 0; i < numCops; i++) {
+        // Ищем ближайшую дорогу в радиусе от игрока
         const angle = rand(0, Math.PI * 2);
-        const dist2 = rand(200, 400);
-        const x = clamp(p.x + Math.cos(angle) * dist2, 50, WORLD_W - 50);
-        const y = clamp(p.y + Math.sin(angle) * dist2, 50, WORLD_H - 50);
-        const cop = new NPC(this.genId(), 'cop', x, y);
-        cop.aiState = 'chase';
+        const minDist = 400;
+        const maxDist = 800;
+        
+        // Сначала пытаемся найти позицию на дороге
+        let spawnX, spawnY;
+        let foundRoad = false;
+        
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const distFromPlayer = rand(minDist, maxDist);
+          const testX = clamp(p.x + Math.cos(angle) * distFromPlayer, 100, WORLD_W - 100);
+          const testY = clamp(p.y + Math.sin(angle) * distFromPlayer, 100, WORLD_H - 100);
+          
+          if (this.isOnRoad(testX, testY)) {
+            spawnX = testX;
+            spawnY = testY;
+            foundRoad = true;
+            break;
+          }
+        }
+        
+        // Если не нашли дорогу, спавним рядом с игроком (fallback)
+        if (!foundRoad) {
+          spawnX = clamp(p.x + rand(-200, 200), 50, WORLD_W - 50);
+          spawnY = clamp(p.y + rand(-200, 200), 50, WORLD_H - 50);
+        }
+        
+        // Создаём полицейскую машину
+        const vehicle = new Vehicle(this.genId(), 'police', spawnX, spawnY, rand(0, Math.PI * 2));
+        vehicle.npcDriver = 'cop';
+        vehicle.aiState = 'chase';
+        vehicle.targetPlayerId = p.id; // преследуем этого игрока
+        this.vehicles[vehicle.id] = vehicle;
+        
+        // Создаём полицейского, который будет в этой машине
+        const cop = new NPC(this.genId(), 'cop', spawnX, spawnY);
+        cop.vehicleId = vehicle.id; // привязываем к машине
+        cop.aiState = 'patrol';
         this.npcs[cop.id] = cop;
       }
     }
@@ -468,7 +785,12 @@ class GameWorld {
 
   // ===== AI =====
 
-  updateNPC(npc, dt) {
+   updateNPC(npc, dt) {
+    // Если NPC находится в машине, он не ходит пешком
+    if (npc.vehicleId && this.vehicles[npc.vehicleId]) {
+      return; // Управление машиной осуществляется в updatePoliceVehicle
+    }
+    
     npc.aiTimer -= dt;
     npc.shootCooldown = Math.max(0, npc.shootCooldown - dt);
 
@@ -913,43 +1235,152 @@ class GameWorld {
     }
   }
 
-  // ===== NPC МАШИНЫ (ЕЗДА ПО ДОРОГАМ) =====
+  // ===== NPC МАШИНЫ (ДВИЖЕНИЕ ПО ДОРОГАМ) =====
 
   updateNPCVehicles() {
     for (const id in this.vehicles) {
       const v = this.vehicles[id];
       if (v.driver !== null) continue; // управляется игроком
-      if (!v.npcDriver) continue;
-
-      // Блуждание
-      if (dist(v.x, v.y, v.targetX, v.targetY) < 50) {
-        // Новая цель — случайная точка на дороге
-        const roads = this.mapData.roadRows;
-        const roadRow = roads[randInt(0, roads.length - 1)];
-        v.targetX = rand(0, WORLD_W);
-        v.targetY = roadRow * TILE_SIZE;
+      
+      // Припаркованные машины не двигаются
+      if (v.isParked) continue;
+      
+      // Полицейские машины управляются через отдельную логику
+      if (v.npcDriver === 'cop') {
+        this.updatePoliceVehicle(v);
+        continue;
       }
+      
+      // Гражданские машины (с водителем-пешеходом или без)
+      if (v.npcDriver === 'pedestrian' || v.npcDriver === 'gangster') {
+        this.updateCivilianVehicle(v);
+        continue;
+      }
+      
+      // Обычное блуждание по дорогам
+      this.updateWanderingVehicle(v);
+    }
+  }
+  
+  // Машины гражданных (ездят по дорогам)
+  updateCivilianVehicle(v) {
+    if (dist(v.x, v.y, v.targetX, v.targetY) < 50) {
+      // Новая цель — случайная точка на дороге
+      const roads = this.mapData.roadRows;
+      const roadRow = roads[randInt(0, roads.length - 1)];
+      v.targetX = rand(0, WORLD_W);
+      v.targetY = roadRow * TILE_SIZE;
+      // Случайный поворот
+      v.rotation = rand(0, Math.PI * 2);
+    }
 
-      const dx = v.targetX - v.x;
-      const dy = v.targetY - v.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 2) {
-        const targetRot = Math.atan2(dy, dx);
-        const diff = angleDiff(v.rotation, targetRot);
-        v.rotation += diff * 0.05;
-        const mvx = Math.cos(v.rotation) * v.speed * 0.5;
-        const mvy = Math.sin(v.rotation) * v.speed * 0.5;
-        v.x += mvx;
-        v.y += mvy;
-        v.x = clamp(v.x, v.width / 2, WORLD_W - v.width / 2);
-        v.y = clamp(v.y, v.height / 2, WORLD_H - v.height / 2);
+    const dx = v.targetX - v.x;
+    const dy = v.targetY - v.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 2) {
+      const targetRot = Math.atan2(dy, dx);
+      const diff = angleDiff(v.rotation, targetRot);
+      v.rotation += diff * 0.05;
+      const mvx = Math.cos(v.rotation) * v.speed * 0.5;
+      const mvy = Math.sin(v.rotation) * v.speed * 0.5;
+      v.x += mvx;
+      v.y += mvy;
+      v.x = clamp(v.x, v.width / 2, WORLD_W - v.width / 2);
+      v.y = clamp(v.y, v.height / 2, WORLD_H - v.height / 2);
+    }
+  }
+  
+  // Полицейские машины (преследуют игрока с розыском)
+  updatePoliceVehicle(v) {
+    // Находим цель
+    let targetPlayer = null;
+    let minDist = Infinity;
+    
+    for (const pid in this.players) {
+      const p = this.players[pid];
+      if (!p.alive) continue;
+      if (p.wanted <= 0) continue;
+      
+      const d = dist(v.x, v.y, p.x, p.y);
+      if (d < minDist) {
+        minDist = d;
+        targetPlayer = p;
       }
     }
+    
+    if (targetPlayer) {
+      // Преследование игрока
+      v.aiState = 'chase';
+      const dx = targetPlayer.x - v.x;
+      const dy = targetPlayer.y - v.y;
+      const d = Math.hypot(dx, dy);
+      
+      if (d > 30) {
+        const targetRot = Math.atan2(dy, dx);
+        const diff = angleDiff(v.rotation, targetRot);
+        v.rotation += diff * 0.08;
+        const mvx = Math.cos(v.rotation) * v.speed * 0.7;
+        const mvy = Math.sin(v.rotation) * v.speed * 0.7;
+        
+        // Проверка коллизий
+        const newX = v.x + mvx;
+        const newY = v.y + mvy;
+        if (this.isWalkable(newX, newY, v.width / 2)) {
+          v.x = newX;
+          v.y = newY;
+        } else {
+          // Попытка объезда
+          const tryAngles = [Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2];
+          let moved = false;
+          for (const offset of tryAngles) {
+            const altRot = v.rotation + offset;
+            const altX = v.x + Math.cos(altRot) * v.speed * 0.5;
+            const altY = v.y + Math.sin(altRot) * v.speed * 0.5;
+            if (this.isWalkable(altX, altY, v.width / 2)) {
+              v.x = altX;
+              v.y = altY;
+              v.rotation = altRot;
+              moved = true;
+              break;
+            }
+          }
+          if (!moved) {
+            // Останавливаемся, но получаем урон от столкновений
+            v.hp = Math.max(0, v.hp - 0.2);
+          }
+        }
+      }
+      v.x = clamp(v.x, v.width / 2, WORLD_W - v.width / 2);
+      v.y = clamp(v.y, v.height / 2, WORLD_H - v.height / 2);
+    } else {
+      // Нет цели - патрулирование
+      v.aiState = 'patrol';
+      if (dist(v.x, v.y, v.targetX, v.targetY) < 50 || v.aiTimer <= 0) {
+        const roads = this.mapData.roadRows;
+        const roadRow = roads[randInt(0, roads.length - 1)];
+        v.targetX = rand(100, WORLD_W - 100);
+        v.targetY = roadRow * TILE_SIZE;
+        v.aiTimer = rand(180, 480);
+      }
+      this.updateCivilianVehicle(v);
+      v.aiTimer--;
+    }
+  }
+  
+  // Машины, которые просто ездят без водителя (блуждают)
+  updateWanderingVehicle(v) {
+    if (dist(v.x, v.y, v.targetX, v.targetY) < 50) {
+      const roads = this.mapData.roadRows;
+      const roadRow = roads[randInt(0, roads.length - 1)];
+      v.targetX = rand(0, WORLD_W);
+      v.targetY = roadRow * TILE_SIZE;
+    }
+    this.updateCivilianVehicle(v);
   }
 
   // ===== ГЛАВНЫЙ ЦИКЛ =====
 
-  tick() {
+   tick() {
     // Обновление игроков (включая респавн мёртвых)
     for (const id in this.players) {
       const p = this.players[id];
@@ -960,15 +1391,18 @@ class GameWorld {
       }
     }
 
-    // Обновление NPC
+    // Обновление NPC (пешеходов и гангстеров, полицейские вне машин)
     for (const id in this.npcs) {
-      this.updateNPC(this.npcs[id], 1);
+      const npc = this.npcs[id];
+      // Пропускаем полицейских, которые в машинах
+      if (npc.vehicleId && this.vehicles[npc.vehicleId]) continue;
+      this.updateNPC(npc, 1);
     }
 
     // Обновление пуль
     this.updateBullets();
 
-    // Обновление NPC-машин
+    // Обновление машин (включая полицейские, гражданские и припаркованные)
     this.updateNPCVehicles();
 
     // Система розыска
@@ -1003,7 +1437,8 @@ class GameWorld {
       vehicles[id] = {
         id: v.id, type: v.type, x: v.x, y: v.y, rotation: v.rotation,
         hp: v.hp, maxHp: v.maxHp, driver: v.driver, color: v.color,
-        width: v.width, height: v.height
+        width: v.width, height: v.height, isParked: v.isParked || false,
+        npcDriver: v.npcDriver || null
       };
     }
 
@@ -1024,11 +1459,19 @@ class GameWorld {
       };
     }
 
+    const special = {};
+    for (const id in this.specialObjects) {
+      const so = this.specialObjects[id];
+      special[id] = {
+        id: so.id, type: so.type, x: so.x, y: so.y, w: so.w, h: so.h
+      };
+    }
+
     const bullets = this.bullets.filter(b => b.alive).map(b => ({
       x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId
     }));
 
-    return { players, vehicles, npcs, items, bullets };
+    return { players, vehicles, npcs, items, special, bullets };
   }
 }
 
