@@ -1,0 +1,16 @@
+{
+  "name": "gta-2d",
+  "version": "1.0.0",
+  "description": "GTA 2D top-down browser game with singleplayer and multiplayer modes",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

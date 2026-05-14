@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GTA 2D</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Главное меню -->
+  <div id="menu">
+    <h1>GTA 2D</h1>
+    <p class="subtitle">Top-Down Action</p>
+    <div id="menu-buttons">
+      <button id="btn-singleplayer" class="menu-btn">Одиночная игра</button>
+      <button id="btn-multiplayer" class="menu-btn">Мультиплеер</button>
+    </div>
+    <div id="multiplayer-connect" style="display:none;">
+      <input type="text" id="nick-input" placeholder="Введите никнейм" maxlength="16" />
+      <button id="btn-connect" class="menu-btn small">Подключиться</button>
+      <button id="btn-back" class="menu-btn small">Назад</button>
+    </div>
+    <div id="controls-info">
+      <p><strong>Управление:</strong></p>
+      <p>WASD / Стрелки — движение</p>
+      <p>Мышь — прицел</p>
+      <p>ЛКМ — стрельба</p>
+      <p>1,2,3 — оружие</p>
+      <p>E — сесть/выйти из машины</p>
+      <p>F — подобрать предмет</p>
+      <p>Enter — чат</p>
+    </div>
+  </div>
+
+  <!-- Игровой экран -->
+  <div id="game-screen" style="display:none;">
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- HUD слева -->
+    <div id="hud">
+      <div id="hp-bar">
+        <div id="hp-fill"></div>
+        <span id="hp-text">100</span>
+      </div>
+      <div id="weapon-info">
+        <span id="weapon-name">Pistol</span>
+        <span id="weapon-ammo">36</span>
+      </div>
+      <div id="wanted-stars"></div>
+    </div>
+
+    <!-- Мини-карта справа сверху -->
+    <div id="minimap">
+      <canvas id="minimapCanvas" width="150" height="150"></canvas>
+    </div>
+
+    <!-- Чат -->
+    <div id="chat-container">
+      <div id="chat-messages"></div>
+      <input type="text" id="chat-input" placeholder="Нажмите Enter для чата..." maxlength="100" />
+    </div>
+
+    <!-- Экран смерти -->
+    <div id="death-screen" style="display:none;">
+      <h2>Вы мертвы</h2>
+      <p>Возрождение через 3 секунды...</p>
+    </div>
+  </div>
+
+  <!-- Загрузка скрипта -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
